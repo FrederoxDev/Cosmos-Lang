@@ -16,8 +16,15 @@ const TT_LPAREN = "LPAREN"
 const TT_RPAREN = "RPAREN"
 const TT_EOF = "EOF"
 
+const TT_EE = "EE" // ==
+const TT_NE = "NE" // !=
+const TT_LT = "LT" // <
+const TT_GT = "GT" // >
+const TT_LTE = "LTE" // <=
+const TT_GTE = "GTE" // >=
+
 const KEYWORDS = [
-    "var"
+    "var", "and", "or", "not"
 ]
 
 class Token {
@@ -101,6 +108,12 @@ class IllegalCharError extends LexError {
 class InvalidSyntaxError extends LexError {
     constructor(posStart: Position, posEnd: Position, details: string) {
         super(posStart, posEnd, "InvalidSyntaxError", details)
+    }
+}
+
+class ExpectedCharError extends LexError {
+    constructor(posStart: Position, posEnd: Position, details: string) {
+        super(posStart, posEnd, "ExpectedCharError", details)
     }
 }
 
@@ -215,7 +228,24 @@ class Lexer {
             else if (this.currentChar === "/") tokens.push(new Token(TT_DIV, undefined, this.pos))
             else if (this.currentChar === "(") tokens.push(new Token(TT_LPAREN, undefined, this.pos))
             else if (this.currentChar === ")") tokens.push(new Token(TT_RPAREN, undefined, this.pos))
-            else if (this.currentChar === "=") tokens.push(new Token(TT_EQ, undefined, this.pos))
+
+            else if (this.currentChar === "!") {
+                var [token, error] = this.makeNotEquals()
+                if (error) return [[], error]
+                tokens.push(token)
+            }
+
+            else if (this.currentChar === "=") {
+                tokens.push(this.makeEquals())
+            }
+
+            else if (this.currentChar === ">") {
+                tokens.push(this.makeGreaterThan())
+            }
+
+            else if (this.currentChar === "<") {
+                tokens.push(this.makeLessThan())
+            }
 
             else {
                 const posStart = this.pos.copy()
@@ -232,7 +262,7 @@ class Lexer {
         return [tokens, null]
     }
 
-    makeNumber(): Token {
+    makeNumber() {
         var numStr = ""
         var dotCount = 0
         var posStart = this.pos.copy()
@@ -268,6 +298,55 @@ class Lexer {
         else tokenType = TT_IDENTIFIER
 
         return new Token(tokenType, id, posStart, this.pos)
+    }
+
+    makeNotEquals(): any {
+        var posStart = this.pos.copy()
+        this.advance()
+
+        if (this.currentChar == "=") {
+            this.advance()
+            return [new Token(TT_NE, posStart, this.pos), undefined]
+        }
+
+        this.advance()
+        return [null, new ExpectedCharError(posStart, this.pos, "Expected '='")]
+    }
+
+    makeEquals() {
+        var posStart = this.pos.copy()
+        this.advance()
+
+        if (this.currentChar == "=") {
+            this.advance()
+            return new Token(TT_EE, posStart, this.pos)
+        }
+
+        return new Token(TT_EQ, posStart, this.pos)
+    }
+
+    makeGreaterThan() {
+        var posStart = this.pos.copy()
+        this.advance()
+
+        if (this.currentChar == "=") {
+            this.advance()
+            return new Token(TT_GTE, posStart, this.pos)
+        }
+
+        return new Token(TT_GT, posStart, this.pos)
+    }
+
+    makeLessThan() {
+        var posStart = this.pos.copy()
+        this.advance()
+
+        if (this.currentChar == "=") {
+            this.advance()
+            return new Token(TT_LTE, posStart, this.pos)
+        }
+
+        return new Token(TT_LT, posStart, this.pos)
     }
 }
 
@@ -463,22 +542,7 @@ class Parser {
     }
 
     power() {
-        var res = new ParseResult()
-        var left = res.register(this.atom())
-        if (res.error) return res
-
-        while ([TT_POW].includes(this.currentToken.type)) {
-            var opTok = this.currentToken
-            res.registerAdvancement()
-            this.advance()
-            var right = res.register(this.factor())
-            if (res.error) return res
-
-            //@ts-ignore
-            left = new BinOpNode(left, opTok, right)
-        }
-
-        return res.success(left)
+        return this.binOp(this.atom, [TT_POW], this.factor)
     }
 
     factor() {
@@ -497,44 +561,28 @@ class Parser {
     }
 
     term() {
-        var res = new ParseResult()
-        var left = res.register(this.factor())
-        if (res.error) return res
-
-        while ([TT_MUL, TT_DIV].includes(this.currentToken.type)) {
-            var opTok = this.currentToken
-            res.registerAdvancement()
-            this.advance()
-            var right = res.register(this.factor())
-            if (res.error) return res
-
-            //@ts-ignore
-            left = new BinOpNode(left, opTok, right)
-        }
-
-        return res.success(left)
+        return this.binOp(this.factor, [TT_MUL, TT_DIV])
     }
 
     expr() {
         var res = new ParseResult()
-
         if (this.currentToken.matches(TT_KEYWORD, "var")) {
             res.registerAdvancement()
             this.advance()
 
             if (this.currentToken.type != TT_IDENTIFIER) {
-                return res.failure(new InvalidSyntaxError(this.currentToken.posStart, this.currentToken.posEnd,
-                    "Expected Identifier"
+                return res.failure(new InvalidSyntaxError(this.currentToken.posStart, this.currentToken.posEnd, 
+                    "Expected Identifier"    
                 ))
             }
 
-            var name = this.currentToken
+            var varName = this.currentToken
             res.registerAdvancement()
             this.advance()
-
-            //@ts-ignore
+            
+            //@ts-ignore TypeScript doesnt recognise .type changes after advance
             if (this.currentToken.type != TT_EQ) {
-                return res.failure(new InvalidSyntaxError(this.currentToken.posStart, this.currentToken.posEnd,
+                return res.failure(new InvalidSyntaxError(this.currentToken.posStart, this.currentToken.posEnd, 
                     "Expected '='"
                 ))
             }
@@ -543,39 +591,74 @@ class Parser {
             this.advance()
             var expr = res.register(this.expr())
             if (res.error) return res
-
-            return res.success(new VarAssignNode(name, expr))
+            return res.success(new VarAssignNode(varName, expr))
         }
 
-        else {
-            var node = res.register(this.literal())
+        var node = res.register(this.binOp(this.compExpr, [[TT_KEYWORD, "and"], [TT_KEYWORD, "or"]]))
 
-            if (res.error) {
-                return res.failure(new InvalidSyntaxError(this.currentToken.posStart, this.currentToken.posEnd,
-                    "Expected 'var', int, float, identifier, '+', '-' or '('"
-                ))
-            }
-            return res.success(node)
+        if (res.error) {
+            return res.failure(new InvalidSyntaxError(this.currentToken.posStart, this.currentToken.posEnd,
+                "Expected 'var', int, float, identifier, '+', '-' or '('"
+            ))
         }
+
+        return res.success(node)
     }
 
-    literal() {
+    compExpr() {
         var res = new ParseResult()
-        var left = res.register(this.term())
-        if (res.error) return res
 
-        while ([TT_PLUS, TT_MINUS].includes(this.currentToken.type)) {
+        if (this.currentToken.matches(TT_KEYWORD, "not")) {
             var opTok = this.currentToken
             res.registerAdvancement()
             this.advance()
-            var right = res.register(this.term())
+
+            var node = res.register(this.compExpr())
             if (res.error) return res
 
-            //@ts-ignore
+            return res.success(new UnaryOpNode(opTok, node))
+        }
+
+        var node = res.register(this.binOp(this.arithExpr, [TT_EE, TT_NE, TT_LT, TT_LTE, TT_GT, TT_GTE]))
+        if (res.error) {
+            return res.failure(new InvalidSyntaxError(this.currentToken.posStart, this.currentToken.posEnd,
+                "Expected int, float, identifier, '+', '-', '(' or 'not'"
+            ))
+        }
+
+        return res.success(node)
+    }
+
+    arithExpr() {
+        return this.binOp(this.term, [TT_PLUS, TT_MINUS])
+    }
+
+    binOp(funcA: Function, ops: any, funcB: Function | undefined = undefined) {
+        if (funcB === undefined) funcB = funcA
+
+        var res = new ParseResult()
+        var left = res.register(funcA.bind(this)())
+        if (res.error) return res
+
+        // while (ops.includes(this.currentToken.type) || ops.includes([this.currentToken.type, this.currentToken.value])) {
+        while (ops.includes(this.currentToken.type) || this.CheckArray(ops, [this.currentToken.type, this.currentToken.value])) {
+            var opTok = this.currentToken
+
+            res.registerAdvancement()
+            this.advance()
+
+            var right = res.register(funcB.bind(this)())
+            if (res.error) return res
             left = new BinOpNode(left, opTok, right)
         }
 
         return res.success(left)
+    }
+
+    CheckArray(arr: any, value: any) {
+        for (var t = 0; t < arr.length; t++) {
+            if (arr[t][0] == value[0] && arr[t][1] == value[1]) return true
+        }
     }
 }
 
@@ -627,6 +710,7 @@ class Number {
         return this
     }
 
+    //#region Arethmetic Operators
     add(other: any) {
         if (other instanceof Number) {
             return [new Number(this.value + other.value).setContext(this.context), null]
@@ -657,12 +741,69 @@ class Number {
             return [new Number(Math.pow(this.value, other.value)).setContext(this.context), null]
         }
     }
+    //#endregion
+
+    //#region Comparison Operators
+    getComparisonEE(other: any) {
+        if (other instanceof Number) {
+            return [new Number(this.value === other.value ? 1 : 0).setContext(this.context), null]
+        }
+    }
+
+    getComparisonNE(other: any) {
+        if (other instanceof Number) {
+            return [new Number(this.value != other.value ? 1 : 0).setContext(this.context), null]
+        }
+    }
+
+    getComparisonGT(other: any) {
+        if (other instanceof Number) {
+            return [new Number(this.value > other.value ? 1 : 0).setContext(this.context), null]
+        }
+    }
+
+    getComparisonGTE(other: any) {
+        if (other instanceof Number) {
+            return [new Number(this.value >= other.value ? 1 : 0).setContext(this.context), null]
+        }
+    }
+
+    getComparisonLT(other: any) {
+        if (other instanceof Number) {
+            return [new Number(this.value < other.value ? 1 : 0).setContext(this.context), null]
+        }
+    }
+
+    getComparisonLTE(other: any) {
+        if (other instanceof Number) {
+            return [new Number(this.value <= other.value ? 1 : 0).setContext(this.context), null]
+        }
+    }
+    //#endregion
+
+    //#region Logical Operators
+    operatorAND(other: any) {
+        if (other instanceof Number) {
+            return [new Number(this.value == 1 && other.value == 1 ? 1 : 0).setContext(this.context), null]
+        }
+    }
+
+    operatorOR(other: any) {
+        if (other instanceof Number) {
+            return [new Number(this.value == 1 || other.value == 1 ? 1 : 0).setContext(this.context), null]
+        }
+    }
+
+    operatorNOT() {
+        return [new Number(this.value == 0 ? 1 : 0).setContext(this.context), null]
+    }
+    //#endregion
 
     copy() {
         var copy = new Number(this.value)
         copy.setPos(this.posStart, this.posEnd)
         copy.setContext(this.context)
-        return copy 
+        return copy
     }
 
     toString() {
@@ -769,11 +910,24 @@ class Interpreter {
         var result: any
         var error: any
 
+        // Arithmetic Operators
         if (node.opToken.type == TT_PLUS) [result, error] = left.add(right)
         else if (node.opToken.type == TT_MINUS) [result, error] = left.subtract(right)
         else if (node.opToken.type == TT_MUL) [result, error] = left.multiply(right)
         else if (node.opToken.type == TT_DIV) [result, error] = left.divide(right)
         else if (node.opToken.type == TT_POW) [result, error] = left.power(right)
+
+        // Comparison Operators
+        else if (node.opToken.type == TT_EE) [result, error] = left.getComparisonEE(right)
+        else if (node.opToken.type == TT_NE) [result, error] = left.getComparisonNE(right)
+        else if (node.opToken.type == TT_LT) [result, error] = left.getComparisonLT(right)
+        else if (node.opToken.type == TT_LTE) [result, error] = left.getComparisonLTE(right)
+        else if (node.opToken.type == TT_GT) [result, error] = left.getComparisonGT(right)
+        else if (node.opToken.type == TT_GTE) [result, error] = left.getComparisonGTE(right)
+
+        // Logical Operators
+        else if (node.opToken.matches(TT_KEYWORD, "and")) [result, error] = left.operatorAND(right)
+        else if (node.opToken.matches(TT_KEYWORD, "or")) [result, error] = left.operatorOR(right)
 
         if (error) return res.failure(error)
         else return res.success(result.setPos(node.posStart, node.posEnd))
@@ -790,6 +944,10 @@ class Interpreter {
             [number, error] = number.multiply(new Number(-1))
         }
 
+        else if (node.opToken.matches(TT_KEYWORD, "not")) {
+            [number, error] = number.operatorNOT()
+        }
+
         if (res.error) return res
         else return res.success(number.setPos(node.posStart, node.posEnd))
     }
@@ -797,6 +955,8 @@ class Interpreter {
 
 var globalSymbolTable = new SymbolTable()
 globalSymbolTable.set("null", new Number(0))
+globalSymbolTable.set("true", new Number(1))
+globalSymbolTable.set("false", new Number(0))
 
 export function run(fileName: string, text: string) {
     // Generate tokens
