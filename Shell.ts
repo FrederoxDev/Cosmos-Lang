@@ -1,13 +1,43 @@
-import { run } from "./Basic"
+import { readFile } from "fs"
+import { Context, Interpreter, SymbolTable } from "./Interpreter"
+import { Lexer } from "./Lexer"
+import { Parser } from "./Parser"
 
-const input = process.stdin
-input.setDefaultEncoding("utf-8")
+const [,, ...args] = process.argv
 
-input.on("data", function (data) {
-    var text = data.toString("utf-8").replace("\r", "")
-    const [result, error] = run("<stdin>", text)
+readFile(args[0], "utf-8", (err, data) => {
+    if (err != null) return console.warn(err)
+    var [result, error] = run(args[0], data)
 
-    if (error) console.log(error.toString())
-    else console.log(result?.toString())
-    console.log("\n")
+    if (error) return console.log(error.toString())
+    console.log(result)
 })
+
+var globalSymbolTable = new SymbolTable()
+
+function run(fileName: string, fileText: string) {
+    const showTokens = false;
+
+    const lexer = new Lexer(fileName, fileText)
+    const [tokens, error] = lexer.makeTokens()
+    if (error) return [[], error]
+
+    if (showTokens) {
+        tokens.forEach(token => {
+            console.log(token.toString())
+        })
+    
+        console.log("\n")
+    }
+
+    const parser = new Parser(fileText, tokens)
+    const ast = parser.parse()
+    if (ast.error) return [null, ast.error]
+
+    const interpreter = new Interpreter(fileText)
+    var context = new Context("<program>")
+    context.symbolTable = globalSymbolTable
+    const result = interpreter.visit(ast.node, context)
+
+    return [result.value, result.error]
+}
