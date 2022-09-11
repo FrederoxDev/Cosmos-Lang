@@ -24,7 +24,7 @@ const TT_LTE = "LTE" // <=
 const TT_GTE = "GTE" // >=
 
 const KEYWORDS = [
-    "var", "and", "or", "not"
+    "var", "and", "or", "not", "if", "then", "elif", "else"
 ]
 
 class Token {
@@ -61,7 +61,7 @@ class Token {
     }
 }
 
-function StrWithArrows(text: string, posStart: Position, posEnd: Position) {
+export function StrWithArrows(text: string, posStart: Position, posEnd: Position) {
     var result = ""
     var idxStart = Math.max(text.slice(0, posStart.idx).lastIndexOf("\n"), 0)
     var idxEnd = text.indexOf("\n", idxStart + 1)
@@ -434,6 +434,22 @@ class UnaryOpNode {
     }
 }
 
+class IfNode {
+    cases: any[]
+    elseCase: any
+
+    posStart: any
+    posEnd: any
+
+    constructor(cases: any[], elseCase: any) {
+        this.cases = cases
+        this.elseCase = elseCase
+
+        this.posStart = this.cases[0][0].posStart
+        this.posEnd = (this.elseCase || this.cases[this.cases.length - 1][0]).posEnd
+    }
+}
+
 class ParseResult {
     error: any
     node: any
@@ -536,9 +552,80 @@ class Parser {
             }
         }
 
+        else if (token.matches(TT_KEYWORD, "if")) {
+            var ifExpr = res.register(this.ifExpr())
+            if (res.error) return res
+            return res.success(ifExpr)
+        }
+
         return res.failure(new InvalidSyntaxError(this.currentToken.posStart, this.currentToken.posEnd,
             "Expected int, float, identifier, '+', '-' or '('"
         ))
+    }
+
+    ifExpr() {
+        var res = new ParseResult()
+        var cases: any[] = []
+        var elseCase = undefined
+
+        if (!this.currentToken.matches(TT_KEYWORD, "if")) {
+            return res.failure(new InvalidSyntaxError(this.currentToken.posStart, this.currentToken.posEnd,
+                "Expected 'if'"
+            ))
+        }
+
+        res.registerAdvancement()
+        this.advance()
+
+        var condition = res.register(this.expr())
+        if (res.error) return res
+
+        if (!this.currentToken.matches(TT_KEYWORD, "then")) {
+            return res.failure(new InvalidSyntaxError(this.currentToken.posStart, this.currentToken.posEnd,
+                "Expected 'then'"
+            ))
+        }
+
+        res.registerAdvancement()
+        this.advance()
+
+        var expr = res.register(this.expr())
+        if (res.error) return res
+        cases.push([condition, expr])
+
+        while (this.currentToken.matches(TT_KEYWORD, "elif")) {
+            res.registerAdvancement()
+            this.advance()
+
+            condition = res.register(this.expr())
+            if (res.error) return res
+
+            if (!this.currentToken.matches(TT_KEYWORD, "then")) {
+                return res.failure(new InvalidSyntaxError(this.currentToken.posStart, this.currentToken.posEnd,
+                    "Expected 'then'"
+                ))
+            }
+
+            res.registerAdvancement()
+            this.advance()
+
+            var expr = res.register(this.expr())
+            if (res.error) return res
+            cases.push([condition, expr])
+        }
+
+        if (this.currentToken.matches(TT_KEYWORD, "else")) {
+            res.registerAdvancement()
+            this.advance()
+
+            elseCase = res.register(this.expr())
+            if (res.error) return res
+        }
+
+
+        console.log(cases)
+        console.log(elseCase)
+        return res.success(new IfNode(cases, elseCase))
     }
 
     power() {
@@ -571,18 +658,18 @@ class Parser {
             this.advance()
 
             if (this.currentToken.type != TT_IDENTIFIER) {
-                return res.failure(new InvalidSyntaxError(this.currentToken.posStart, this.currentToken.posEnd, 
-                    "Expected Identifier"    
+                return res.failure(new InvalidSyntaxError(this.currentToken.posStart, this.currentToken.posEnd,
+                    "Expected Identifier"
                 ))
             }
 
             var varName = this.currentToken
             res.registerAdvancement()
             this.advance()
-            
+
             //@ts-ignore TypeScript doesnt recognise .type changes after advance
             if (this.currentToken.type != TT_EQ) {
-                return res.failure(new InvalidSyntaxError(this.currentToken.posStart, this.currentToken.posEnd, 
+                return res.failure(new InvalidSyntaxError(this.currentToken.posStart, this.currentToken.posEnd,
                     "Expected '='"
                 ))
             }
@@ -708,6 +795,10 @@ class Number {
     setContext(context: any = undefined) {
         this.context = context
         return this
+    }
+
+    isTrue() {
+        return this.value == 1
     }
 
     //#region Arethmetic Operators
@@ -863,6 +954,7 @@ class Interpreter {
         else if (node.constructor.name == "VarAccessNode") return this.visitVarAccessNode(node, context)
         else if (node.constructor.name == "VarAssignNode") return this.visitVarAssignNode(node, context)
         else if (node.constructor.name == "UnaryOpNode") return this.visitUnaryOpNode(node, context)
+        else if (node.constructor.name == "IfNode") return this.visitIfNode(node, context)
     }
 
     visitVarAccessNode(node: any, context: Context) {
@@ -950,6 +1042,39 @@ class Interpreter {
 
         if (res.error) return res
         else return res.success(number.setPos(node.posStart, node.posEnd))
+    }
+
+    visitIfNode(node: any, context: Context) {
+        var res = new RunTimeResult()
+
+        for (var item in node.cases) {
+
+            console.log("hi")
+            var [condition, expr] = item
+
+            console.log(condition)
+            console.log(expr)
+
+            var conditionValue = res.register(this.visit(condition, context))
+            if (res.error) return res
+
+            console.log("Value: " + conditionValue)
+            console.log("True?: " + conditionValue.isTrue())
+            
+            if (conditionValue.isTrue()) {
+                var exprValue = res.register(this.visit(expr, context))
+                if (res.error) return res
+                return res.success(exprValue)
+            }
+        }
+
+        if (node.elseCase) {
+            var elseValue = res.register(this.visit(node.elseCase, context))
+            if (res.error) return res
+            return res.success(elseValue)
+        }
+
+        return res.success(undefined)
     }
 }
 

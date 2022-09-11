@@ -8,6 +8,6 @@ input.on("data", function (data) {
     const [result, error] = run("<stdin>", text)
 
     if (error) console.log(error.toString())
-    else console.log(result?.toString())
+    else if (result) console.log(result?.toString())
     console.log("\n")
 })
