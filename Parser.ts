@@ -4,11 +4,13 @@ export class ParseResult {
     error: any
     node: any
     advanceCount: number
+    lastRegisteredAdvance: number
 
     constructor() {
         this.error = undefined
         this.node = undefined
         this.advanceCount = 0
+        this.lastRegisteredAdvance = 0
     }
 
     register(res: any) {
@@ -19,6 +21,12 @@ export class ParseResult {
 
     registerAdvancement() {
         this.advanceCount += 1
+        this.lastRegisteredAdvance = 1
+    }
+
+    tryRegister(res: any) {
+        if (res.error) return undefined
+        return this.register(res)
     }
 
     success(node: any) {
@@ -87,6 +95,18 @@ export class StringNode {
 
     toString() {
         return `${this.token.toString()}`
+    }
+}
+
+export class ArrayNode {
+    elementNodes: any
+    posStart: Position
+    posEnd: Position
+
+    constructor(elementNodes: any, posStart: Position, posEnd: Position) {
+        this.elementNodes = elementNodes
+        this.posStart = posStart
+        this.posEnd = posEnd
     }
 }
 
@@ -163,6 +183,24 @@ export class VarAccessNode {
     }
 }
 
+export class AccessIndexNode {
+    node: Token
+    index: Token
+    posStart: Position
+    posEnd: Position
+
+    constructor(node: Token, index: Token) {
+        this.node = node
+        this.index = index
+        this.posStart = node.posStart
+        this.posEnd = index.posEnd
+    }
+
+    toString() {
+        `return ${this.node.toString()}[${this.index.toString()}]`
+    }
+}
+
 export class IfNode {
     condition: any
     expr: any
@@ -183,6 +221,39 @@ export class IfNode {
         else {
             this.posEnd = this.expr.posEnd
         }
+    }
+}
+
+export class ForNode {
+    initialization: Token
+    condition: Token
+    iteration: Token
+    expr: Token
+    posStart: Position
+    posEnd: Position
+
+    constructor(initialization: Token, condition: Token, iteration: Token, expr: Token) {
+        this.initialization = initialization
+        this.condition = condition
+        this.iteration = iteration
+        this.expr = expr
+
+        this.posStart = initialization.posStart
+        this.posEnd = expr.posEnd
+    } 
+}
+
+export class WhileNode {
+    condition: Token 
+    expr: Token
+    posStart: Position
+    posEnd: Position
+
+    constructor(condition: Token, expr: Token) {
+        this.condition = condition
+        this.expr = expr
+        this.posStart = condition.posStart
+        this.posEnd = expr.posEnd
     }
 }
 
@@ -211,16 +282,49 @@ export class Parser {
         return this.currentToken
     }
 
+    reverse(amount: number = 1) {
+        this.tokenIdx -= amount
+        this.currentToken = this.tokens[this.tokenIdx]
+    }
+
     parse(): ParseResult {
         const res = this.expr()
 
         if (!res.error && this.currentToken.type != TokenType.EndOfFile) {
             return res.failure(new InvalidSyntaxError(this.fileText, this.currentToken.posStart, this.currentToken.posEnd,
-                "Unexpected EOF"
+                "Expected EOF"
             ))
         }
 
         return res
+    }
+
+    statement(): ParseResult {
+        var res = new ParseResult()
+        var statements: any[] = []
+        var start = this.currentToken.posStart.copy()
+
+        var firstStatement = res.register(this.expr())
+        console.log(firstStatement.toString())
+        if (res.error) return res
+        statements.push(firstStatement)
+
+        while (this.currentToken.type == TokenType.SemiColon) {
+            res.registerAdvancement()
+            this.advance()
+            var pos: Position = this.currentToken.posStart.copy()
+            
+            var statement = res.tryRegister(this.expr())
+            if (!statement) {
+                this.reverse(this.tokenIdx - pos.idx)
+                break;
+            }
+            statements.push(statement)
+        }
+
+        // To Create: ListNode
+        //@ts-ignore
+        return res.success(new ListNode(statements, start, this.currentToken.posEnd.copy))
     }
 
     expr(): ParseResult {
@@ -274,6 +378,7 @@ export class Parser {
 
             var expr = res.register(this.expr())
             if (res.error) return res
+
             return res.success(new VarAssignNode(varNameToken, typeToken, expr))
         }
 
@@ -339,7 +444,30 @@ export class Parser {
             return res.success(new UnaryOpNode(token, factor))
         }
 
-        return this.atom()
+        var atom = res.register(this.atom())
+        if (res.error) return res
+
+        if (this.currentToken.type == TokenType.LSqr) {
+            res.registerAdvancement()
+            this.advance()
+
+            var index = res.register(this.expr())
+            if (res.error) return res
+
+            //@ts-ignore
+            if (this.currentToken.type != TokenType.RSqr) {
+                return res.failure(new InvalidSyntaxError(this.fileText, this.currentToken.posStart, this.currentToken.posEnd, 
+                    "Expected ']'"    
+                ))
+            }
+
+            res.registerAdvancement()
+            this.advance()
+
+            return res.success(new AccessIndexNode(atom, index))
+        }
+
+        return res.success(atom)
     }
 
     atom(): ParseResult {
@@ -370,15 +498,73 @@ export class Parser {
             return res.success(new VarAccessNode(token))
         }
 
+        else if ([TokenType.LSqr].includes(token.type)) {
+            var arrayExpr = res.register(this.arrayExpr())
+            if (res.error) return res
+
+            return res.success(arrayExpr)
+        }
+
         else if (token.matches(TokenType.Keyword, "if")) {
             var ifExpr = res.register(this.ifExpr())
             if (res.error) return res
             return res.success(ifExpr)
         }
 
+        else if (token.matches(TokenType.Keyword, "for")) {
+            var forExpr = res.register(this.forExpr())
+            if (res.error) return res
+            return res.success(forExpr)
+        }
+
+        else if (token.matches(TokenType.Keyword, "while")) {
+            var whileExpr = res.register(this.whileExpr())
+            if (res.error) return res
+            return res.success(whileExpr)
+        }
+
         return res.failure(new InvalidSyntaxError(this.fileText, this.currentToken.posStart, this.currentToken.posEnd,
             "Expected number, string, or boolean"
         ))
+    }
+
+    arrayExpr() {
+        var res = new ParseResult()
+        var nodes: any[] = []
+        var start = this.currentToken.posStart.copy()
+
+        res.registerAdvancement()
+        this.advance()
+
+        if (this.currentToken.type == TokenType.RSqr) {
+            res.registerAdvancement()
+            this.advance()
+        }
+
+        else {
+            nodes.push(res.register(this.expr()))
+            if (res.error) return res
+
+            while (this.currentToken.type == TokenType.Comma) {
+                res.registerAdvancement()
+                this.advance()
+
+                nodes.push(res.register(this.expr()))
+                if (res.error) return res
+            }
+
+            //@ts-ignore
+            if (this.currentToken.type != TokenType.RSqr) {
+                return res.failure(new InvalidSyntaxError(this.fileText, this.currentToken.posStart, this.currentToken.posEnd,
+                    "Expected ',' or ']'"    
+                ))
+            }
+
+            res.registerAdvancement()
+            this.advance()
+        }
+
+        return res.success(new ArrayNode(nodes, start, this.currentToken.posEnd.copy()))
     }
 
     ifExpr() {
@@ -423,6 +609,10 @@ export class Parser {
 
         return res.success(new IfNode(condition, expr, elseExpr))
     }
+
+    forExpr() {}
+
+    whileExpr() {}
 
     binOp(funcA: Function, ops: any, funcB: Function | undefined = undefined) {
         if (funcB === undefined) funcB = funcA

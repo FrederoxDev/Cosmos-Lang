@@ -1,5 +1,5 @@
 import { readFile } from "fs"
-import { Context, Interpreter, SymbolTable } from "./Interpreter"
+import { Context, Interpreter, SymbolTable, String, Number, Boolean } from "./Interpreter"
 import { Lexer } from "./Lexer"
 import { Parser } from "./Parser"
 
@@ -10,13 +10,15 @@ readFile(args[0], "utf-8", (err, data) => {
     var [result, error] = run(args[0], data)
 
     if (error) return console.log(error.toString())
-    console.log(result)
+    console.log(result.toString())
 })
 
 var globalSymbolTable = new SymbolTable()
 
 function run(fileName: string, fileText: string) {
     const showTokens = false;
+    const showAST = false;
+    const showSymbolTable = false;
 
     const lexer = new Lexer(fileName, fileText)
     const [tokens, error] = lexer.makeTokens()
@@ -34,10 +36,14 @@ function run(fileName: string, fileText: string) {
     const ast = parser.parse()
     if (ast.error) return [null, ast.error]
 
+    if (showAST) console.log(ast)
+
     const interpreter = new Interpreter(fileText)
     var context = new Context("<program>")
     context.symbolTable = globalSymbolTable
     const result = interpreter.visit(ast.node, context)
+
+    if (showSymbolTable) console.log(context.symbolTable.toString())
 
     return [result.value, result.error]
 }

@@ -1,5 +1,5 @@
 import { LexError, Position, TokenType } from "./Lexer"
-import { BinOpNode, BooleanNode, IfNode, NumberNode, StringNode, UnaryOpNode, VarAccessNode, VarAssignNode } from "./Parser"
+import { AccessIndexNode, ArrayNode, BinOpNode, BooleanNode, IfNode, NumberNode, ParseResult, StringNode, UnaryOpNode, VarAccessNode, VarAssignNode } from "./Parser"
 
 export class Context {
     displayName: string
@@ -40,6 +40,20 @@ export class SymbolTable {
 
     remove(name: string) {
         delete this.symbols[name]
+    }
+
+    toString() {
+        var keys = Object.keys(this.symbols)
+        var output = ""
+
+        if (keys.length == 0) return `SymbolTable: Empty`
+        console.log(keys)
+
+        for (var key in keys) {
+            output += `${key}: ${this.symbols[key]}`
+        }
+
+        return output
     }
 }
 
@@ -122,22 +136,45 @@ export class Number {
         return this
     }
 
+    toString() {
+        return `Number(${this.value})`
+    }
+
+    copy() {
+        var copy = new Number(this.value)
+        copy.setPos(this.posStart, this.posEnd)
+        copy.setContext(this.context)
+        return copy
+    }
+
     add(other: any) {
         if (other instanceof Number) {
             return [new Number(this.value + other.value).setContext(this.context), null]
         }
+
+        else return [null, new RunTimeError(fileText, this.posStart, this.posEnd,
+            `The '+' operator cannot be applied to operands of type '${this.constructor.name}' and '${other.constructor.name}'`, this.context
+        )]
     }
 
     subtract(other: any) {
         if (other instanceof Number) {
             return [new Number(this.value - other.value).setContext(this.context), null]
         }
+
+        else return [null, new RunTimeError(fileText, this.posStart, this.posEnd,
+            `The '-' operator cannot be applied to operands of type '${this.constructor.name}' and '${other.constructor.name}'`, this.context
+        )]
     }
 
     multiply(other: any) {
         if (other instanceof Number) {
             return [new Number(this.value * other.value).setContext(this.context), null]
         }
+
+        else return [null, new RunTimeError(fileText, this.posStart, this.posEnd,
+            `The '*' operator cannot be applied to operands of type '${this.constructor.name}' and '${other.constructor.name}'`, this.context
+        )]
     }
 
     divide(other: any) {
@@ -147,6 +184,10 @@ export class Number {
             )]
             return [new Number(this.value / other.value).setContext(this.context), null]
         }
+
+        else return [null, new RunTimeError(fileText, this.posStart, this.posEnd,
+            `The '/' operator cannot be applied to operands of type '${this.constructor.name}' and '${other.constructor.name}'`, this.context
+        )]
     }
 
     //#region Comparison Operators
@@ -204,26 +245,6 @@ export class Number {
         )]
     }
     //#endregion
-
-    //#region Logical Operators
-    operatorAND(other: any) {
-        return [null, new RunTimeError(fileText, this.posStart, this.posEnd,
-            "The '&&' operator cannot be applied to operand of type 'Number'", this.context
-        )]
-    }
-
-    operatorOR(other: any) {
-        return [null, new RunTimeError(fileText, this.posStart, this.posEnd,
-            "The '||' operator cannot be applied to operand of type 'Number'", this.context
-        )]
-    }
-
-    operatorNOT() {
-        return [null, new RunTimeError(fileText, this.posStart, this.posEnd,
-            "The '!' operator cannot be applied to operand of type 'Number'", this.context
-        )]
-    }
-    //#endregion
 }
 
 export class Boolean {
@@ -249,28 +270,15 @@ export class Boolean {
         return this
     }
 
-    add(other: any) {
-        return [null, new RunTimeError(fileText, this.posStart, this.posEnd,
-            "The '+' operator cannot be applied to operand of type 'Boolean'", this.context
-        )]
+    toString() {
+        return `Boolean(${this.value})`
     }
 
-    subtract(other: any) {
-        return [null, new RunTimeError(fileText, this.posStart, this.posEnd,
-            "The '-' operator cannot be applied to operand of type 'Boolean'", this.context
-        )]
-    }
-
-    multiply(other: any) {
-        return [null, new RunTimeError(fileText, this.posStart, this.posEnd,
-            "The '*' operator cannot be applied to operand of type 'Boolean'", this.context
-        )]
-    }
-
-    divide(other: any) {
-        return [null, new RunTimeError(fileText, this.posStart, this.posEnd,
-            "The '/' operator cannot be applied to operand of type 'Boolean'", this.context
-        )]
+    copy() {
+        var copy = new Boolean(this.value)
+        copy.setPos(this.posStart, this.posEnd)
+        copy.setContext(this.context)
+        return copy
     }
 
     //#region Comparison Operators
@@ -286,30 +294,6 @@ export class Boolean {
 
     getComparisonNE(other: any) {
         return [new Boolean(this.value !== other.value).setContext(this.context), null]
-    }
-
-    getComparisonGT(other: any) {
-        return [null, new RunTimeError(fileText, this.posStart, this.posEnd,
-            "The '>' operator cannot be applied to operand of type 'Boolean'", this.context
-        )]
-    }
-
-    getComparisonGTE(other: any) {
-        return [null, new RunTimeError(fileText, this.posStart, this.posEnd,
-            "The '>=' operator cannot be applied to operand of type 'Boolean'", this.context
-        )]
-    }
-
-    getComparisonLT(other: any) {
-        return [null, new RunTimeError(fileText, this.posStart, this.posEnd,
-            "The '<' operator cannot be applied to operand of type 'Boolean'", this.context
-        )]
-    }
-
-    getComparisonLTE(other: any) {
-        return [null, new RunTimeError(fileText, this.posStart, this.posEnd,
-            "The '<=' operator cannot be applied to operand of type 'Boolean'", this.context
-        )]
     }
     //#endregion
 
@@ -363,6 +347,27 @@ export class String {
         return this
     }
 
+    toString() {
+        return `String("${this.value}")`
+    }
+
+    copy() {
+        var copy = new String(this.value)
+        copy.setPos(this.posStart, this.posEnd)
+        copy.setContext(this.context)
+        return copy
+    }
+
+    getIndex(index: Number) {
+        if (index.value > this.value.length - 1) {
+            return [null, new RunTimeError(fileText, this.posStart, this.posEnd,
+                `Index out of range`, this.context
+            )]
+        }
+
+        return [new String(this.value[index.value]).setContext(this.context), null]
+    }
+
     add(other: any) {
         if (other instanceof String) {
             return [new String(this.value + other.value).setContext(this.context), null]
@@ -370,24 +375,6 @@ export class String {
 
         else return [null, new RunTimeError(fileText, this.posStart, this.posEnd,
             `The '+' operator cannot be applied to operands of type '${this.constructor.name}' and '${other.constructor.name}'`, this.context
-        )]
-    }
-
-    subtract(other: any) {
-        return [null, new RunTimeError(fileText, this.posStart, this.posEnd,
-            "The '-' operator cannot be applied to operand of type 'String'", this.context
-        )]
-    }
-
-    multiply(other: any) {
-        return [null, new RunTimeError(fileText, this.posStart, this.posEnd,
-            "The '*' operator cannot be applied to operand of type 'String'", this.context
-        )]
-    }
-
-    divide(other: any) {
-        return [null, new RunTimeError(fileText, this.posStart, this.posEnd,
-            "The '/' operator cannot be applied to operand of type 'String'", this.context
         )]
     }
 
@@ -405,51 +392,56 @@ export class String {
     getComparisonNE(other: any) {
         return [new Boolean(this.value !== other.value).setContext(this.context), null]
     }
+}
 
-    getComparisonGT(other: any) {
-        return [null, new RunTimeError(fileText, this.posStart, this.posEnd,
-            "The '>' operator cannot be applied to operand of type 'String'", this.context
-        )]
+export class Array {
+    nodes: any[]
+    posStart: any
+    posEnd: any
+    context: any
+
+    constructor(nodes: any[]) {
+        this.nodes = nodes
+        this.setPos()
+        this.setContext()
     }
 
-    getComparisonGTE(other: any) {
-        return [null, new RunTimeError(fileText, this.posStart, this.posEnd,
-            "The '>=' operator cannot be applied to operand of type 'String'", this.context
-        )]
+    setPos(posStart: any = undefined, posEnd: any = undefined) {
+        this.posStart = posStart
+        this.posEnd = posEnd
+        return this
     }
 
-    getComparisonLT(other: any) {
-        return [null, new RunTimeError(fileText, this.posStart, this.posEnd,
-            "The '<' operator cannot be applied to operand of type 'String'", this.context
-        )]
+    setContext(context: any = undefined) {
+        this.context = context
+        return this
     }
 
-    getComparisonLTE(other: any) {
-        return [null, new RunTimeError(fileText, this.posStart, this.posEnd,
-            "The '<=' operator cannot be applied to operand of type 'String'", this.context
-        )]
-    }
-    //#endregion
+    getIndex(index: Number) {
+        if (index.value > this.nodes.length - 1) {
+            return [null, new RunTimeError(fileText, this.posStart, this.posEnd,
+                `Index out of range`, this.context
+            )]
+        }
 
-    //#region Logical Operators
-    operatorAND(other: any) {
-        return [null, new RunTimeError(fileText, this.posStart, this.posEnd,
-            "The '&&' operator cannot be applied to operand of type 'String'", this.context
-        )]
+        return [this.nodes[index.value], null]
     }
 
-    operatorOR(other: any) {
-        return [null, new RunTimeError(fileText, this.posStart, this.posEnd,
-            "The '||' operator cannot be applied to operand of type 'String'", this.context
-        )]
+    toString() {
+        var nodesTxt = ""
+        this.nodes.forEach((node, i) => {
+            nodesTxt += node.toString()
+            if (i != this.nodes.length - 1) nodesTxt += ", "
+        })
+        return `Array[${nodesTxt}]`
     }
 
-    operatorNOT() {
-        return [null, new RunTimeError(fileText, this.posStart, this.posEnd,
-            "The '!' operator cannot be applied to operand of type 'String'", this.context
-        )]
+    copy() {
+        var copy = new Array(this.nodes)
+        copy.setPos(this.posStart, this.posEnd)
+        copy.setContext(this.context)
+        return copy
     }
-    //#endregion
 }
 
 var fileText = ""
@@ -494,6 +486,18 @@ export class Interpreter {
         )
     }
 
+    visit_String(node: String, context: Context) {
+        return new RunTimeResult().success(node)
+    }
+
+    visit_ArrayNode(node: ArrayNode, context: Context) {
+        return new RunTimeResult().success(
+            new Array(node.elementNodes)
+                .setContext(context)
+                .setPos(node.posStart, node.posEnd)
+        )
+    }
+
     visit_BinOpNode(node: BinOpNode, context: Context) {
         var res = new RunTimeResult()
         var left = res.register(this.visit(node.leftNode, context))
@@ -502,25 +506,30 @@ export class Interpreter {
         var right = res.register(this.visit(node.rightNode, context))
         if (res.error) return res
 
-        var result: any
-        var error: any
+        var func: Function | undefined = undefined;
 
-        if (node.opToken.type == TokenType.Plus) [result, error] = left.add(right)
-        else if (node.opToken.type == TokenType.Minus) [result, error] = left.subtract(right)
-        else if (node.opToken.type == TokenType.Multiply) [result, error] = left.multiply(right)
-        else if (node.opToken.type == TokenType.Divide) [result, error] = left.divide(right)
+        if (node.opToken.type == TokenType.Plus) func = left.add
+        else if (node.opToken.type == TokenType.Minus) func = left.subtract
+        else if (node.opToken.type == TokenType.Multiply) func = left.multiply
+        else if (node.opToken.type == TokenType.Divide) func = left.divide
 
         // Comparison Operators
-        else if (node.opToken.type == TokenType.EE) [result, error] = left.getComparisonEE(right)
-        else if (node.opToken.type == TokenType.NE) [result, error] = left.getComparisonNE(right)
-        else if (node.opToken.type == TokenType.LT) [result, error] = left.getComparisonLT(right)
-        else if (node.opToken.type == TokenType.LTE) [result, error] = left.getComparisonLTE(right)
-        else if (node.opToken.type == TokenType.GT) [result, error] = left.getComparisonGT(right)
-        else if (node.opToken.type == TokenType.GTE) [result, error] = left.getComparisonGTE(right)
+        else if (node.opToken.type == TokenType.EE) func = left.getComparisonEE
+        else if (node.opToken.type == TokenType.NE) func = left.getComparisonNE
+        else if (node.opToken.type == TokenType.LT) func = left.getComparisonLT
+        else if (node.opToken.type == TokenType.LTE) func = left.getComparisonLTE
+        else if (node.opToken.type == TokenType.GT) func = left.getComparisonGT
+        else if (node.opToken.type == TokenType.GTE) func = left.getComparisonGTE
 
         // Logical Operators
-        else if (node.opToken.type == TokenType.And) [result, error] = left.operatorAND(right)
-        else if (node.opToken.type == TokenType.Or) [result, error] = left.operatorOR(right)
+        else if (node.opToken.type == TokenType.And) func = left.operatorAND
+        else if (node.opToken.type == TokenType.Or) func = left.operatorOR
+
+        if (func == undefined) return res.failure(new RunTimeError(fileText, node.posStart, node.posEnd, 
+            `Operator '${TokenType[node.opToken.type]}' cannot be applied to type ${left.constructor.name}`, context    
+        ))
+
+        var [result, error] = func.bind(left)(right)
 
         if (error) return res.failure(error)
         else return res.success(result.setPos(node.posStart, node.posEnd))
@@ -580,7 +589,7 @@ export class Interpreter {
         return res.success(value)
     }
 
-    visitVarAccessNode(node: VarAccessNode, context: Context) {
+    visit_VarAccessNode(node: VarAccessNode, context: Context) {
         var res = new RunTimeResult()
         var varName = node.varNameToken.value
         var value = context.symbolTable.get(varName)
@@ -591,8 +600,7 @@ export class Interpreter {
                 context
             ))
         }
-
-        value = value.copy().setPos(node.posStart, node.posEnd)
+        
         return res.success(value)
     }
 
@@ -621,5 +629,36 @@ export class Interpreter {
         }
 
         return res.success(undefined)
+    }
+
+    visit_AccessIndexNode(node: AccessIndexNode, context: Context) {
+        var res = new RunTimeResult()
+        var item = res.register(this.visit(node.node, context))
+        if (res.error) return res
+
+        var index = res.register(this.visit(node.index, context))
+        if (res.error) return res
+
+        if (!(index instanceof Number)) {
+            return res.failure(new RunTimeError(fileText, node.posStart, node.posEnd, 
+                `Index cannot be of type ${index.constructor.name}`, context    
+            ))
+        }
+
+        if (item["getIndex"]) {
+            var [result, error] = item.getIndex(index)
+            if (error) return res.failure(error)
+            
+            var value = res.register(this.visit(result, context))
+            if (res.error) return res.failure(error)
+
+            return res.success(value)
+        } 
+        
+        else {
+            return res.failure(new RunTimeError(fileText, node.posStart, node.posEnd, 
+                `Cannot get index of type ${item.constructor.name}`, context    
+            ))
+        }
     }
 }

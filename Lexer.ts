@@ -15,6 +15,10 @@ export enum TokenType {
     RBrace,
     LParen,
     RParen,
+    LSqr,
+    RSqr,
+    Comma,
+
     Plus,
     Minus,
     Multiply,
@@ -34,12 +38,13 @@ export enum TokenType {
     And
 }
 
-export const Keywords = ["if", "else", "not", "and", "or"]
+export const Keywords = ["if", "else", "not", "and", "or", "for", "while"]
 
 export const Types = [
     "number",
     "string",
-    "boolean"
+    "boolean",
+    "array"
 ]
 
 export class Token {
@@ -119,6 +124,7 @@ export class LexError {
 
     toString() {
         var res = `${this.errorName}: ${this.details}`
+        res += `\n    at ${this.posStart.col} to ${this.posEnd.col}`
         res += `\n\n${this.Underline(this.fileText, this.posStart, this.posEnd)}`
 
         return res
@@ -183,8 +189,6 @@ export class Lexer {
         var ignore = ["\r", "\n", " ", "\t"]
 
         while (this.currentChar != null) {
-            var semiColon = false
-
             if (ignore.includes(this.currentChar)) {
                 this.advance()
                 continue;
@@ -214,15 +218,14 @@ export class Lexer {
             else if (this.currentChar === ")") tokens.push(new Token(TokenType.RParen, undefined, this.pos))
             else if (this.currentChar === "{") tokens.push(new Token(TokenType.LBrace, undefined, this.pos))
             else if (this.currentChar === "}") tokens.push(new Token(TokenType.RBrace, undefined, this.pos))
+            else if (this.currentChar === "[") tokens.push(new Token(TokenType.LSqr, undefined, this.pos))
+            else if (this.currentChar === "]") tokens.push(new Token(TokenType.RSqr, undefined, this.pos))
             else if (this.currentChar === "+") tokens.push(new Token(TokenType.Plus, undefined, this.pos))
             else if (this.currentChar === "-") tokens.push(new Token(TokenType.Minus, undefined, this.pos))
             else if (this.currentChar === "*") tokens.push(new Token(TokenType.Multiply, undefined, this.pos))
             else if (this.currentChar === "/") tokens.push(new Token(TokenType.Divide, undefined, this.pos))
-
-            else if (this.currentChar === ";") {
-                tokens.push(new Token(TokenType.SemiColon, undefined, this.pos))
-                semiColon = true
-            }
+            else if (this.currentChar === ";") tokens.push(new Token(TokenType.SemiColon, undefined, this.pos))
+            else if (this.currentChar === ",") tokens.push(new Token(TokenType.Comma, undefined, this.pos))
 
             else {
                 return [[], new IllegalCharError(this.fileText, this.pos, this.pos, 
@@ -230,11 +233,10 @@ export class Lexer {
                 )]
             }
             
-            if (this.currentChar === ";" && !semiColon) tokens.push(new Token(TokenType.SemiColon, undefined, this.pos))
             this.advance()
         }
 
-        tokens.push(new Token(TokenType.EndOfFile))
+        tokens.push(new Token(TokenType.EndOfFile, undefined, this.pos))
         return [tokens, null]
     }
 
@@ -255,6 +257,7 @@ export class Lexer {
             this.advance()
         }
 
+        this.reverse()
         return new Token(TokenType.Number, parseFloat(numStr), posStart, this.pos)
     }
 
