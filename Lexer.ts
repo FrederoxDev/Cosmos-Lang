@@ -38,7 +38,7 @@ export enum TokenType {
     And
 }
 
-export const Keywords = ["if", "else", "not", "and", "or", "for", "while"]
+export const Keywords = ["if", "else", "function"]
 
 export const Types = [
     "number",
@@ -133,9 +133,11 @@ export class LexError {
     Underline(text: string, posStart: Position, posEnd: Position) {
         var result = ""
         text = text.split("\n")[Math.max(posStart.ln - 1, 0)]
-    
-        result += text + "\n"
-        result += "\x1b[31m" + "^".repeat(text.length) + "\x1b[0m" 
+
+        if (text != undefined) {
+            result += text + "\n"
+            result += "\x1b[31m" + "^".repeat(text.length) + "\x1b[0m" 
+        }
     
         return result
     }
@@ -284,6 +286,7 @@ export class Lexer {
             return new Token(TokenType.Keyword, id, posStart, this.pos)
         }
 
+        this.reverse()
         return new Token(TokenType.Identifier, id, posStart, this.pos)
     }
 

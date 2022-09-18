@@ -1,5 +1,5 @@
-import { LexError, Position, TokenType } from "./Lexer"
-import { AccessIndexNode, ArrayNode, BinOpNode, BooleanNode, IfNode, NumberNode, ParseResult, StringNode, UnaryOpNode, VarAccessNode, VarAssignNode } from "./Parser"
+import { LexError, Position, Token, TokenType } from "./Lexer"
+import { AccessIndexNode, ArrayNode, BinOpNode, BooleanNode, CallNode, FuncDefNode, IfNode, NumberNode, ParseResult, StatementNode, StringNode, UnaryOpNode, VarAccessNode, VarAssignNode } from "./Parser"
 
 export class Context {
     displayName: string
@@ -19,9 +19,9 @@ export class SymbolTable {
     symbols: any
     parent: any
 
-    constructor() {
+    constructor(parent: SymbolTable | undefined = undefined) {
         this.symbols = {}
-        this.parent = undefined
+        this.parent = parent
     }
 
     get(name: string) {
@@ -444,6 +444,69 @@ export class Array {
     }
 }
 
+export class Func {
+    name: string
+    argsNames: Token[]
+    body: Token
+    posStart: any
+    posEnd: any
+    context: any
+
+    constructor(name: string | undefined, argsNames: Token[], body: Token) {
+        this.name = name || "anonymous"
+        this.argsNames = argsNames
+        this.body = body
+    }
+
+    setPos(posStart: any = undefined, posEnd: any = undefined) {
+        this.posStart = posStart
+        this.posEnd = posEnd
+        return this
+    }
+
+    setContext(context: any = undefined) {
+        this.context = context
+        return this
+    }
+
+    invoke(args: any[]) {
+        var res = new RunTimeResult()
+        var interpreter = new Interpreter(fileText)
+        var newContext = new Context(this.name, this.context, this.posStart)
+        newContext.symbolTable = new SymbolTable(newContext.parent.symbolTable)
+
+        if (args.length != this.argsNames.length) {
+            return res.failure(new RunTimeError(fileText, this.posStart, this.posEnd, 
+                `${args.length} args passed into ${this.name}, expected ${this.argsNames.length} args`, 
+                this.context    
+            ))
+        }
+
+        for (var i = 0; i < args.length; i++) {
+            var argName = this.argsNames[i]
+            var argValue = args[i]
+
+            argValue.setContext(newContext)
+            newContext.symbolTable.set(argName, argValue)
+        }
+
+        var value = res.register(interpreter.visit(this.body, newContext))
+        if (res.error) return res
+        return res.success(value)
+    }
+
+    copy() {
+        var copy = new Func(this.name, this.argsNames, this.body)
+        copy.setContext(this.context)
+        copy.setPos(this.posStart, this.posEnd)
+        return copy
+    }
+
+    toString() {
+        return `<function ${this.name}>`
+    }
+}
+
 var fileText = ""
 
 export class Interpreter {
@@ -660,5 +723,59 @@ export class Interpreter {
                 `Cannot get index of type ${item.constructor.name}`, context    
             ))
         }
+    }
+
+    visit_FuncDefNode(node: FuncDefNode, context: Context) {
+        var res = new RunTimeResult()
+        var funcName = node.varName
+        var argNames: any = []
+
+        node.argNames.forEach(t => {
+            argNames.push(t.value)
+        })
+
+        var func = new Func(funcName, argNames, node.functionBody)
+            .setContext(context)
+            .setPos(node.posStart, node.posEnd)
+
+        if (node.varName != undefined) {
+            context.symbolTable.set(funcName, func)
+        }
+
+        return res.success(func)
+    }
+
+    visit_CallNode(node: CallNode, context: Context) {
+        var res = new RunTimeResult()
+        var args: any[] = []
+
+        var valToCall = res.register(this.visit(node.node, context))
+        if (res.error) return res
+
+        valToCall = valToCall.copy().setPos(node.posStart, node.posEnd)
+
+        for (var i = 0; i < node.argNodes.length; i++) {
+            args.push(res.register(this.visit(node.argNodes[i], context)))
+            if (res.error) return res
+        }
+        
+        var returnVal = res.register(valToCall.invoke(args))
+        if (res.error) return res
+
+
+        return res.success(returnVal)
+    }
+
+    visit_StatementNode(node: StatementNode, context: Context) {
+        var res = new RunTimeResult()
+        var statements: any[] = []
+
+        for (var i = 0; i < node.statements.length; i++) {
+            var statement = res.register(this.visit(node.statements[i], context))
+            if (res.error) return res
+            statements.push(statement)
+        }
+
+        return res.success(new Array(statements).setContext(context).setPos(node.posStart, node.posEnd))
     }
 }

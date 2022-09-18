@@ -1,1 +1,5 @@
-"hi"[0] + "ello world"
+function Add(a, b) {
+    a + b
+};
+
+Add(1, 2);

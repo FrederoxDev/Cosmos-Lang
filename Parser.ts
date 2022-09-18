@@ -1,4 +1,5 @@
 import { LexError, Position, Token, TokenType, Types } from "./Lexer";
+import { Number, String, Boolean, Array } from "./Interpreter";
 
 export class ParseResult {
     error: any
@@ -105,6 +106,18 @@ export class ArrayNode {
 
     constructor(elementNodes: any, posStart: Position, posEnd: Position) {
         this.elementNodes = elementNodes
+        this.posStart = posStart
+        this.posEnd = posEnd
+    }
+}
+
+export class StatementNode {
+    statements: any
+    posStart: Position
+    posEnd: Position
+
+    constructor(elementNodes: any, posStart: Position, posEnd: Position) {
+        this.statements = elementNodes
         this.posStart = posStart
         this.posEnd = posEnd
     }
@@ -224,36 +237,36 @@ export class IfNode {
     }
 }
 
-export class ForNode {
-    initialization: Token
-    condition: Token
-    iteration: Token
-    expr: Token
+export class FuncDefNode {
+    varName: string | undefined
+    argNames: Token[]
+    functionBody: Token
     posStart: Position
     posEnd: Position
 
-    constructor(initialization: Token, condition: Token, iteration: Token, expr: Token) {
-        this.initialization = initialization
-        this.condition = condition
-        this.iteration = iteration
-        this.expr = expr
+    constructor(varName: string | undefined, argNames: Token[], functionBody: Token) {
+        this.varName = varName
+        this.argNames = argNames
+        this.functionBody = functionBody
 
-        this.posStart = initialization.posStart
-        this.posEnd = expr.posEnd
-    } 
+        this.posStart = this.functionBody.posStart
+        this.posEnd = this.functionBody.posEnd
+    }
 }
 
-export class WhileNode {
-    condition: Token 
-    expr: Token
+export class CallNode {
+    node: Token
+    argNodes: Token[]
     posStart: Position
     posEnd: Position
 
-    constructor(condition: Token, expr: Token) {
-        this.condition = condition
-        this.expr = expr
-        this.posStart = condition.posStart
-        this.posEnd = expr.posEnd
+    constructor(node: Token, argNodes: Token[]) {
+        this.node = node
+        this.argNodes = argNodes
+        this.posStart = node.posStart
+
+        if (this.argNodes.length > 0) this.posEnd = this.argNodes[this.argNodes.length - 1].posEnd
+        else this.posEnd = this.node.posEnd
     }
 }
 
@@ -288,7 +301,7 @@ export class Parser {
     }
 
     parse(): ParseResult {
-        const res = this.expr()
+        const res = this.statements()
 
         if (!res.error && this.currentToken.type != TokenType.EndOfFile) {
             return res.failure(new InvalidSyntaxError(this.fileText, this.currentToken.posStart, this.currentToken.posEnd,
@@ -299,32 +312,53 @@ export class Parser {
         return res
     }
 
-    statement(): ParseResult {
+    statements(): ParseResult {
         var res = new ParseResult()
         var statements: any[] = []
-        var start = this.currentToken.posStart.copy()
+        var start = this.currentToken.posStart
 
-        var firstStatement = res.register(this.expr())
-        console.log(firstStatement.toString())
+        var statement = res.register(this.statement())
         if (res.error) return res
-        statements.push(firstStatement)
+        statements.push(statement)
 
-        while (this.currentToken.type == TokenType.SemiColon) {
+        if (this.currentToken.type != TokenType.SemiColon) {
+            return res.failure(new InvalidSyntaxError(this.fileText, this.currentToken.posStart, this.currentToken.posEnd,
+                `Got token ${this.currentToken.toString()} expected ${TokenType[TokenType.SemiColon]}`
+            ))
+        }
+
+        res.registerAdvancement()
+        this.advance()
+
+        //@ts-ignore
+        while (this.currentToken.type != TokenType.EndOfFile) {
+            statement = res.register(this.statement())
+            if (res.error) return res
+
+            if (this.currentToken.type != TokenType.SemiColon) {
+                return res.failure(new InvalidSyntaxError(this.fileText, this.currentToken.posStart, this.currentToken.posEnd,
+                    `Got token ${this.currentToken.toString()} expected ${TokenType[TokenType.SemiColon]}`
+                ))
+            }
+    
             res.registerAdvancement()
             this.advance()
-            var pos: Position = this.currentToken.posStart.copy()
-            
-            var statement = res.tryRegister(this.expr())
-            if (!statement) {
-                this.reverse(this.tokenIdx - pos.idx)
-                break;
-            }
+
             statements.push(statement)
         }
 
-        // To Create: ListNode
-        //@ts-ignore
-        return res.success(new ListNode(statements, start, this.currentToken.posEnd.copy))
+        return res.success(new StatementNode(statements, start, this.currentToken.posEnd))
+    }
+
+    statement(): ParseResult {
+        var res = new ParseResult()
+        var start = this.currentToken.posStart
+
+        // Add support for keywords (return, continue, break)
+
+        var expr = res.register(this.expr())
+        if (res.error) return res
+        return res.success(expr)
     }
 
     expr(): ParseResult {
@@ -444,7 +478,7 @@ export class Parser {
             return res.success(new UnaryOpNode(token, factor))
         }
 
-        var atom = res.register(this.atom())
+        var atom = res.register(this.call())
         if (res.error) return res
 
         if (this.currentToken.type == TokenType.LSqr) {
@@ -465,6 +499,51 @@ export class Parser {
             this.advance()
 
             return res.success(new AccessIndexNode(atom, index))
+        }
+
+        return res.success(atom)
+    }
+
+    call(): ParseResult {
+        var res = new ParseResult()
+        var atom = res.register(this.atom())
+        var args: Token[] = []
+        if (res.error) return res
+
+        if (this.currentToken.type == TokenType.LParen) {
+            res.registerAdvancement()
+            this.advance()
+            
+            //@ts-ignore
+            if (this.currentToken.type == TokenType.RParen) {
+                res.registerAdvancement()
+                this.advance()
+            }
+
+            else {
+                args.push(res.register(this.expr()))
+                if (res.error) return res
+
+                //@ts-ignore
+                while (this.currentToken.type == TokenType.Comma) {
+                    res.registerAdvancement()
+                    this.advance()
+                    args.push(res.register(this.expr()))
+                    if (res.error) return res
+                }
+
+                //@ts-ignore
+                if (this.currentToken.type != TokenType.RParen) {
+                    return res.failure(new InvalidSyntaxError(this.fileText, this.currentToken.posStart, this.currentToken.posEnd, 
+                        "Expected ',' or ')'"    
+                    ))
+                }
+                
+                res.registerAdvancement()
+                this.advance()
+            }
+
+            return res.success(new CallNode(atom, args))
         }
 
         return res.success(atom)
@@ -511,16 +590,10 @@ export class Parser {
             return res.success(ifExpr)
         }
 
-        else if (token.matches(TokenType.Keyword, "for")) {
-            var forExpr = res.register(this.forExpr())
+        else if (token.matches(TokenType.Keyword, "function")) {
+            var funcDef = res.register(this.funcDef())
             if (res.error) return res
-            return res.success(forExpr)
-        }
-
-        else if (token.matches(TokenType.Keyword, "while")) {
-            var whileExpr = res.register(this.whileExpr())
-            if (res.error) return res
-            return res.success(whileExpr)
+            return res.success(funcDef)
         }
 
         return res.failure(new InvalidSyntaxError(this.fileText, this.currentToken.posStart, this.currentToken.posEnd,
@@ -610,9 +683,66 @@ export class Parser {
         return res.success(new IfNode(condition, expr, elseExpr))
     }
 
-    forExpr() {}
+    funcDef() {
+        var res = new ParseResult()
+        res.registerAdvancement()
+        this.advance()
 
-    whileExpr() {}
+        var funcName: Token | undefined = undefined
+
+        if (this.currentToken.type == TokenType.Identifier) {
+            funcName = this.currentToken
+            res.registerAdvancement()
+            this.advance()
+        }
+
+        if (this.currentToken.type != TokenType.LParen) {
+            return res.failure(new InvalidSyntaxError(this.fileText, this.currentToken.posStart, this.currentToken.posEnd, 
+                "Expected '('"    
+            ))
+        }
+
+        res.registerAdvancement()
+        this.advance()
+
+        var argTokens: Token[] = []
+
+        //@ts-ignore
+        if (this.currentToken.type == TokenType.Identifier) {
+            argTokens.push(this.currentToken)
+            res.registerAdvancement()
+            this.advance()
+
+            while (this.currentToken.type == TokenType.Comma) {
+                res.registerAdvancement()
+                this.advance()
+
+                if (this.currentToken.type != TokenType.Identifier) {
+                    return res.failure(new InvalidSyntaxError(this.fileText, this.currentToken.posStart, this.currentToken.posEnd, 
+                        "Expected identifier"    
+                    ))
+                }
+
+                argTokens.push(this.currentToken)
+                res.registerAdvancement()
+                this.advance()
+            }
+        }
+        
+        //@ts-ignore
+        if (this.currentToken.type != TokenType.RParen) {
+            return res.failure(new InvalidSyntaxError(this.fileText, this.currentToken.posStart, this.currentToken.posEnd, 
+                "Expected ')' or ','"    
+            ))
+        }
+
+        res.registerAdvancement()
+        this.advance()
+
+        var body = res.register(this.expr())
+        if (res.error) return res
+        return res.success(new FuncDefNode(funcName?.value, argTokens, body))
+    }
 
     binOp(funcA: Function, ops: any, funcB: Function | undefined = undefined) {
         if (funcB === undefined) funcB = funcA

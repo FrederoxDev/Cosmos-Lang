@@ -7,6 +7,7 @@ const [,, ...args] = process.argv
 
 readFile(args[0], "utf-8", (err, data) => {
     if (err != null) return console.warn(err)
+    if (data == "") return console.warn("Empty file")
     var [result, error] = run(args[0], data)
 
     if (error) return console.log(error.toString())
